@@ -1,5 +1,61 @@
 from telebot import types
 
+from config import TIMEZONE_OPTIONS
+
+
+# =========================================================
+# First-Time Timezone Setup
+# =========================================================
+
+def timezone_setup_menu():
+    """
+    قائمة اختيار المنطقة الزمنية عند أول استخدام للبوت.
+
+    لا يمكن للمستخدم الوصول إلى القائمة الرئيسية
+    قبل اختيار المنطقة الزمنية.
+    """
+
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+
+    for name, timezone_name in TIMEZONE_OPTIONS:
+        keyboard.add(
+            types.InlineKeyboardButton(
+                name,
+                callback_data=f"set_timezone:{timezone_name}"
+            )
+        )
+
+    return keyboard
+
+
+# =========================================================
+# Timezone Menu
+# =========================================================
+
+def timezone_menu():
+    """
+    قائمة تغيير المنطقة الزمنية من الإعدادات.
+    """
+
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+
+    for name, timezone_name in TIMEZONE_OPTIONS:
+        keyboard.add(
+            types.InlineKeyboardButton(
+                name,
+                callback_data=f"set_timezone:{timezone_name}"
+            )
+        )
+
+    keyboard.add(
+        types.InlineKeyboardButton(
+            "🔙 رجوع",
+            callback_data="settings"
+        )
+    )
+
+    return keyboard
+
 
 # =========================================================
 # Main Menu
@@ -122,15 +178,26 @@ def reminder_settings():
 def morning_settings(enabled=True):
     """
     إعدادات أذكار الصباح.
+
+    enabled=True  → التذكير مفعل.
+    enabled=False → التذكير متوقف.
     """
 
     keyboard = types.InlineKeyboardMarkup(row_width=2)
 
-    status = "🔴 إيقاف" if enabled else "🟢 تشغيل"
+    status = "🟢 مفعل" if enabled else "🔴 متوقف"
+    action = "⏸️ إيقاف التذكير" if enabled else "▶️ تشغيل التذكير"
 
     keyboard.add(
         types.InlineKeyboardButton(
             f"{status}",
+            callback_data="morning_status"
+        )
+    )
+
+    keyboard.add(
+        types.InlineKeyboardButton(
+            action,
             callback_data="toggle_morning"
         )
     )
@@ -159,15 +226,26 @@ def morning_settings(enabled=True):
 def evening_settings(enabled=True):
     """
     إعدادات أذكار المساء.
+
+    enabled=True  → التذكير مفعل.
+    enabled=False → التذكير متوقف.
     """
 
     keyboard = types.InlineKeyboardMarkup(row_width=2)
 
-    status = "🔴 إيقاف" if enabled else "🟢 تشغيل"
+    status = "🟢 مفعل" if enabled else "🔴 متوقف"
+    action = "⏸️ إيقاف التذكير" if enabled else "▶️ تشغيل التذكير"
 
     keyboard.add(
         types.InlineKeyboardButton(
             f"{status}",
+            callback_data="evening_status"
+        )
+    )
+
+    keyboard.add(
+        types.InlineKeyboardButton(
+            action,
             callback_data="toggle_evening"
         )
     )
@@ -190,62 +268,12 @@ def evening_settings(enabled=True):
 
 
 # =========================================================
-# Timezone Menu
-# =========================================================
-
-def timezone_menu():
-    """
-    قائمة المناطق الزمنية الشائعة.
-    """
-
-    keyboard = types.InlineKeyboardMarkup(row_width=2)
-
-    timezones = [
-        ("🇾🇪 اليمن", "tz_Asia/Aden"),
-        ("🇪🇬 مصر", "tz_Africa/Cairo"),
-        ("🇸🇦 السعودية", "tz_Asia/Riyadh"),
-        ("🇦🇪 الإمارات", "tz_Asia/Dubai"),
-        ("🇯🇴 الأردن", "tz_Asia/Amman"),
-        ("🇮🇶 العراق", "tz_Asia/Baghdad"),
-        ("🇰🇼 الكويت", "tz_Asia/Kuwait"),
-        ("🇶🇦 قطر", "tz_Asia/Qatar"),
-        ("🇧🇭 البحرين", "tz_Asia/Bahrain"),
-        ("🇴🇲 عُمان", "tz_Asia/Muscat"),
-        ("🇲🇦 المغرب", "tz_Africa/Casablanca"),
-        ("🇩🇿 الجزائر", "tz_Africa/Algiers"),
-        ("🇹🇳 تونس", "tz_Africa/Tunis"),
-        ("🇬🇧 بريطانيا", "tz_Europe/London"),
-        ("🇫🇷 فرنسا", "tz_Europe/Paris"),
-        ("🇩🇪 ألمانيا", "tz_Europe/Berlin"),
-        ("🇺🇸 أمريكا", "tz_America/New_York"),
-        ("🇨🇦 كندا", "tz_America/Toronto"),
-    ]
-
-    for name, callback in timezones:
-        keyboard.add(
-            types.InlineKeyboardButton(
-                name,
-                callback_data=callback
-            )
-        )
-
-    keyboard.add(
-        types.InlineKeyboardButton(
-            "🔙 رجوع",
-            callback_data="settings"
-        )
-    )
-
-    return keyboard
-
-
-# =========================================================
 # Time Selection
 # =========================================================
 
 def time_selection(prefix):
     """
-    قائمة اختيار الوقت.
+    قائمة اختيار وقت التذكير.
 
     prefix:
         morning
@@ -254,28 +282,45 @@ def time_selection(prefix):
 
     keyboard = types.InlineKeyboardMarkup(row_width=3)
 
-    times = [
-        "05:00",
-        "05:30",
-        "06:00",
-        "06:30",
-        "07:00",
-        "07:30",
-        "08:00",
-        "17:00",
-        "17:30",
-        "18:00",
-        "18:30",
-        "19:00",
-        "19:30",
-        "20:00",
-    ]
+    if prefix == "morning":
+        times = [
+            "05:00",
+            "05:30",
+            "06:00",
+            "06:30",
+            "07:00",
+            "07:30",
+            "08:00",
+            "08:30",
+            "09:00",
+        ]
+
+    elif prefix == "evening":
+        times = [
+            "16:00",
+            "16:30",
+            "17:00",
+            "17:30",
+            "18:00",
+            "18:30",
+            "19:00",
+            "19:30",
+            "20:00",
+            "20:30",
+            "21:00",
+        ]
+
+    else:
+        times = [
+            "06:00",
+            "18:00",
+        ]
 
     for time in times:
         keyboard.add(
             types.InlineKeyboardButton(
                 time,
-                callback_data=f"{prefix}_set_{time}"
+                callback_data=f"{prefix}_set:{time}"
             )
         )
 
@@ -332,6 +377,56 @@ def dua_navigation():
         types.InlineKeyboardButton(
             "🤲 دعاء آخر",
             callback_data="duas_next"
+        )
+    )
+
+    keyboard.add(
+        types.InlineKeyboardButton(
+            "🔙 القائمة الرئيسية",
+            callback_data="main_menu"
+        )
+    )
+
+    return keyboard
+
+
+# =========================================================
+# All Adhkar Menu
+# =========================================================
+
+def all_adhkar_menu():
+    """
+    قائمة جميع أقسام الأذكار.
+    """
+
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+
+    keyboard.add(
+        types.InlineKeyboardButton(
+            "🌅 أذكار الصباح",
+            callback_data="morning"
+        ),
+        types.InlineKeyboardButton(
+            "🌙 أذكار المساء",
+            callback_data="evening"
+        )
+    )
+
+    keyboard.add(
+        types.InlineKeyboardButton(
+            "🕌 أذكار الصلاة",
+            callback_data="prayer"
+        ),
+        types.InlineKeyboardButton(
+            "😴 أذكار النوم",
+            callback_data="sleep"
+        )
+    )
+
+    keyboard.add(
+        types.InlineKeyboardButton(
+            "🤲 الأدعية",
+            callback_data="duas"
         )
     )
 
