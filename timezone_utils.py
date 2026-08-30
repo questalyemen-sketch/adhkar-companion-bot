@@ -10,11 +10,17 @@ def is_valid_timezone(timezone_name):
     """
     التحقق من صحة اسم المنطقة الزمنية.
 
-    مثال:
+    أمثلة:
         Asia/Aden      -> True
         Asia/Riyadh    -> True
         Invalid/Zone   -> False
+        None           -> False
     """
+
+    if not isinstance(timezone_name, str):
+        return False
+
+    timezone_name = timezone_name.strip()
 
     if not timezone_name:
         return False
@@ -23,7 +29,7 @@ def is_valid_timezone(timezone_name):
         ZoneInfo(timezone_name)
         return True
 
-    except ZoneInfoNotFoundError:
+    except (ZoneInfoNotFoundError, ValueError):
         return False
 
 
@@ -35,7 +41,10 @@ def get_timezone(timezone_name):
     """
     الحصول على كائن ZoneInfo للمنطقة الزمنية.
 
-    يعيد None إذا كانت المنطقة غير صحيحة.
+    يعيد:
+        ZoneInfo
+    أو:
+        None إذا كانت المنطقة غير صحيحة.
     """
 
     if not is_valid_timezone(timezone_name):
@@ -44,7 +53,7 @@ def get_timezone(timezone_name):
     try:
         return ZoneInfo(timezone_name)
 
-    except ZoneInfoNotFoundError:
+    except (ZoneInfoNotFoundError, ValueError):
         return None
 
 
@@ -103,7 +112,7 @@ def get_local_date(timezone_name):
 
 
 # =========================================================
-# Get Current Local Time String
+# Get Current Local Time
 # =========================================================
 
 def get_local_time(timezone_name):
@@ -120,12 +129,56 @@ def get_local_time(timezone_name):
 
 
 # =========================================================
+# Validate Time
+# =========================================================
+
+def is_valid_time(time_value):
+    """
+    التحقق من صحة الوقت بصيغة HH:MM.
+
+    أمثلة:
+        06:00 -> True
+        18:30 -> True
+        25:00 -> False
+        6:00  -> False
+    """
+
+    if not isinstance(time_value, str):
+        return False
+
+    time_value = time_value.strip()
+
+    if len(time_value) != 5:
+        return False
+
+    if time_value[2] != ":":
+        return False
+
+    hour = time_value[:2]
+    minute = time_value[3:]
+
+    if not (hour.isdigit() and minute.isdigit()):
+        return False
+
+    hour = int(hour)
+    minute = int(minute)
+
+    return (
+        0 <= hour <= 23
+        and 0 <= minute <= 59
+    )
+
+
+# =========================================================
 # Convert UTC To Local Time
 # =========================================================
 
 def utc_to_local(utc_datetime, timezone_name):
     """
     تحويل وقت UTC إلى الوقت المحلي للمستخدم.
+
+    إذا كان datetime بدون timezone،
+    يتم اعتباره UTC.
     """
 
     tz = get_timezone(timezone_name)
@@ -133,8 +186,13 @@ def utc_to_local(utc_datetime, timezone_name):
     if tz is None:
         return None
 
+    if not isinstance(utc_datetime, datetime):
+        return None
+
     if utc_datetime.tzinfo is None:
-        utc_datetime = utc_datetime.replace(tzinfo=timezone.utc)
+        utc_datetime = utc_datetime.replace(
+            tzinfo=timezone.utc
+        )
 
     return utc_datetime.astimezone(tz)
 
@@ -151,12 +209,18 @@ def is_time_match(
     التحقق مما إذا كان الوقت الحالي للمستخدم
     يطابق وقت التذكير.
 
-    target_time يجب أن يكون:
+    target_time:
         HH:MM
 
     مثال:
         is_time_match("Asia/Aden", "06:00")
     """
+
+    if not is_valid_timezone(timezone_name):
+        return False
+
+    if not is_valid_time(target_time):
+        return False
 
     current_time = get_local_time(timezone_name)
 
@@ -172,9 +236,9 @@ def is_time_match(
 
 def get_utc_offset(timezone_name):
     """
-    الحصول على فرق التوقيت عن UTC.
+    الحصول على فرق التوقيت الحالي عن UTC.
 
-    مثال تقريبي:
+    مثال:
         Asia/Aden -> UTC+03:00
     """
 
@@ -210,6 +274,10 @@ def format_local_time(
 ):
     """
     تنسيق الوقت المحلي للمستخدم.
+
+    مثال:
+        format_local_time("Asia/Aden")
+        -> 06:15
     """
 
     local_time = get_local_now(timezone_name)
@@ -221,6 +289,63 @@ def format_local_time(
 
 
 # =========================================================
+# Timezone Display Names
+# =========================================================
+
+TIMEZONE_NAMES = {
+
+    # -----------------------------------------------------
+    # Arabian Peninsula
+    # -----------------------------------------------------
+
+    "Asia/Aden": "🇾🇪 اليمن",
+    "Asia/Riyadh": "🇸🇦 السعودية",
+    "Asia/Dubai": "🇦🇪 الإمارات",
+    "Asia/Muscat": "🇴🇲 عُمان",
+    "Asia/Qatar": "🇶🇦 قطر",
+    "Asia/Bahrain": "🇧🇭 البحرين",
+    "Asia/Kuwait": "🇰🇼 الكويت",
+
+    # -----------------------------------------------------
+    # Middle East
+    # -----------------------------------------------------
+
+    "Asia/Baghdad": "🇮🇶 العراق",
+    "Asia/Amman": "🇯🇴 الأردن",
+    "Asia/Beirut": "🇱🇧 لبنان",
+    "Asia/Damascus": "🇸🇾 سوريا",
+    "Asia/Jerusalem": "🇵🇸 فلسطين",
+    "Europe/Istanbul": "🇹🇷 تركيا",
+
+    # -----------------------------------------------------
+    # North Africa
+    # -----------------------------------------------------
+
+    "Africa/Cairo": "🇪🇬 مصر",
+    "Africa/Tripoli": "🇱🇾 ليبيا",
+    "Africa/Tunis": "🇹🇳 تونس",
+    "Africa/Algiers": "🇩🇿 الجزائر",
+    "Africa/Casablanca": "🇲🇦 المغرب",
+    "Africa/Khartoum": "🇸🇩 السودان",
+
+    # -----------------------------------------------------
+    # Europe
+    # -----------------------------------------------------
+
+    "Europe/London": "🇬🇧 بريطانيا",
+    "Europe/Paris": "🇫🇷 فرنسا",
+    "Europe/Berlin": "🇩🇪 ألمانيا",
+
+    # -----------------------------------------------------
+    # North America
+    # -----------------------------------------------------
+
+    "America/New_York": "🇺🇸 أمريكا - نيويورك",
+    "America/Toronto": "🇨🇦 كندا - تورنتو",
+}
+
+
+# =========================================================
 # Get Timezone Display Name
 # =========================================================
 
@@ -229,38 +354,36 @@ def get_timezone_display_name(timezone_name):
     تحويل اسم المنطقة الزمنية إلى اسم مناسب للعرض.
     """
 
-    timezone_names = {
-        "Asia/Aden": "🇾🇪 اليمن",
-        "Asia/Riyadh": "🇸🇦 السعودية",
-        "Asia/Dubai": "🇦🇪 الإمارات",
-        "Asia/Muscat": "🇴🇲 عُمان",
-        "Asia/Qatar": "🇶🇦 قطر",
-        "Asia/Bahrain": "🇧🇭 البحرين",
-        "Asia/Kuwait": "🇰🇼 الكويت",
-        "Asia/Baghdad": "🇮🇶 العراق",
-        "Asia/Amman": "🇯🇴 الأردن",
-        "Asia/Beirut": "🇱🇧 لبنان",
+    if not timezone_name:
+        return None
 
-        "Africa/Cairo": "🇪🇬 مصر",
-        "Africa/Tripoli": "🇱🇾 ليبيا",
-        "Africa/Tunis": "🇹🇳 تونس",
-        "Africa/Algiers": "🇩🇿 الجزائر",
-        "Africa/Casablanca": "🇲🇦 المغرب",
-        "Africa/Khartoum": "🇸🇩 السودان",
-
-        "Europe/London": "🇬🇧 بريطانيا",
-        "Europe/Paris": "🇫🇷 فرنسا",
-        "Europe/Berlin": "🇩🇪 ألمانيا",
-        "Europe/Istanbul": "🇹🇷 تركيا",
-
-        "America/New_York": "🇺🇸 أمريكا - نيويورك",
-        "America/Toronto": "🇨🇦 كندا - تورنتو",
-    }
-
-    return timezone_names.get(
+    return TIMEZONE_NAMES.get(
         timezone_name,
         timezone_name
     )
+
+
+# =========================================================
+# Get Available Timezones
+# =========================================================
+
+def get_available_timezones():
+    """
+    الحصول على المناطق الزمنية المتاحة في واجهة البوت.
+
+    النتيجة:
+        قائمة من tuples:
+        [
+            ("🇾🇪 اليمن", "Asia/Aden"),
+            ...
+        ]
+    """
+
+    return [
+        (display_name, timezone_name)
+        for timezone_name, display_name
+        in TIMEZONE_NAMES.items()
+    ]
 
 
 # =========================================================
@@ -270,6 +393,17 @@ def get_timezone_display_name(timezone_name):
 def get_timezone_info(timezone_name):
     """
     الحصول على معلومات كاملة عن المنطقة الزمنية.
+
+    يعيد:
+        {
+            "name": ...,
+            "display_name": ...,
+            "current_time": ...,
+            "current_date": ...,
+            "utc_offset": ...
+        }
+
+    أو None إذا كانت المنطقة غير صحيحة.
     """
 
     if not is_valid_timezone(timezone_name):
@@ -277,8 +411,16 @@ def get_timezone_info(timezone_name):
 
     return {
         "name": timezone_name,
-        "display_name": get_timezone_display_name(timezone_name),
-        "current_time": get_local_time(timezone_name),
-        "current_date": get_local_date(timezone_name),
-        "utc_offset": get_utc_offset(timezone_name),
+        "display_name": get_timezone_display_name(
+            timezone_name
+        ),
+        "current_time": get_local_time(
+            timezone_name
+        ),
+        "current_date": get_local_date(
+            timezone_name
+        ),
+        "utc_offset": get_utc_offset(
+            timezone_name
+        ),
     }
