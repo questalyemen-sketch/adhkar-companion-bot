@@ -3,14 +3,13 @@
 # Telegram Bot Handlers
 # =========================================================
 
-from telebot import TeleBot, types
+from telebot import TeleBot
 
 from config import BOT_NAME
 
 from database import (
     add_user,
     get_user,
-    has_timezone,
     update_timezone,
     update_morning_settings,
     update_evening_settings,
@@ -18,6 +17,7 @@ from database import (
 
 from keyboards import (
     main_menu,
+    timezone_setup_menu,
     timezone_menu,
     reminder_settings,
     morning_settings,
@@ -25,6 +25,7 @@ from keyboards import (
     time_selection,
     adhkar_navigation,
     dua_navigation,
+    all_adhkar_menu,
 )
 
 from adhkar import (
@@ -66,70 +67,15 @@ user_states = {}
 
 
 # =========================================================
-# Helper Keyboards
-# =========================================================
-
-def timezone_setup_menu():
-    """
-    قائمة اختيار المنطقة الزمنية عند أول دخول.
-    """
-
-    return timezone_menu()
-
-
-def all_adhkar_menu():
-    """
-    قائمة جميع أقسام الأذكار.
-    """
-
-    keyboard = types.InlineKeyboardMarkup(row_width=2)
-
-    keyboard.add(
-        types.InlineKeyboardButton(
-            "🌅 أذكار الصباح",
-            callback_data="morning"
-        ),
-        types.InlineKeyboardButton(
-            "🌙 أذكار المساء",
-            callback_data="evening"
-        )
-    )
-
-    keyboard.add(
-        types.InlineKeyboardButton(
-            "🕌 أذكار الصلاة",
-            callback_data="prayer"
-        ),
-        types.InlineKeyboardButton(
-            "😴 أذكار النوم",
-            callback_data="sleep"
-        )
-    )
-
-    keyboard.add(
-        types.InlineKeyboardButton(
-            "🤲 الأدعية",
-            callback_data="duas"
-        )
-    )
-
-    keyboard.add(
-        types.InlineKeyboardButton(
-            "🔙 القائمة الرئيسية",
-            callback_data="main_menu"
-        )
-    )
-
-    return keyboard
-
-
-# =========================================================
 # User Helpers
 # =========================================================
 
 def ensure_user(user):
     """
     التأكد من وجود المستخدم في قاعدة البيانات.
+
+    إذا لم يكن موجودًا يتم إنشاؤه.
+    إذا كان موجودًا يتم تحديث الاسم واسم المستخدم.
     """
 
     telegram_id = user.id
@@ -144,9 +90,15 @@ def ensure_user(user):
             username=user.username or "",
         )
 
-        existing_user = get_user(telegram_id)
+    else:
+        # تحديث بيانات المستخدم بدون تغيير إعداداته.
+        add_user(
+            telegram_id=telegram_id,
+            first_name=user.first_name or "",
+            username=user.username or "",
+        )
 
-    return existing_user
+    return get_user(telegram_id)
 
 
 def ensure_callback_user(call):
@@ -157,16 +109,20 @@ def ensure_callback_user(call):
     return ensure_user(call.from_user)
 
 
+# =========================================================
+# Timezone Requirement
+# =========================================================
+
 def timezone_required(message):
     """
     التأكد من أن المستخدم اختار المنطقة الزمنية.
 
-    إذا لم يخترها، يتم عرض شاشة الاختيار.
+    إذا لم يخترها، يتم عرض قائمة الاختيار.
     """
 
     user = ensure_user(message.from_user)
 
-    if not user["timezone"]:
+    if not user or not user["timezone"]:
 
         bot.send_message(
             message.chat.id,
@@ -192,7 +148,7 @@ def callback_timezone_required(call):
 
     user = ensure_callback_user(call)
 
-    if not user["timezone"]:
+    if not user or not user["timezone"]:
 
         bot.answer_callback_query(
             call.id,
@@ -201,10 +157,12 @@ def callback_timezone_required(call):
         )
 
         try:
+
             bot.edit_message_text(
                 (
                     "🌍 <b>اختر منطقتك الزمنية أولًا</b>\n\n"
-                    "حتى يتم إرسال التذكيرات في وقتها الصحيح."
+                    "حتى يتم إرسال التذكيرات في وقتها الصحيح.\n\n"
+                    "⬇️ اختر منطقتك:"
                 ),
                 call.message.chat.id,
                 call.message.message_id,
@@ -213,11 +171,13 @@ def callback_timezone_required(call):
             )
 
         except Exception:
+
             bot.send_message(
                 call.message.chat.id,
                 (
                     "🌍 <b>اختر منطقتك الزمنية أولًا</b>\n\n"
-                    "حتى يتم إرسال التذكيرات في وقتها الصحيح."
+                    "حتى يتم إرسال التذكيرات في وقتها الصحيح.\n\n"
+                    "⬇️ اختر منطقتك:"
                 ),
                 parse_mode="HTML",
                 reply_markup=timezone_setup_menu(),
@@ -227,6 +187,10 @@ def callback_timezone_required(call):
 
     return True
 
+
+# =========================================================
+# Main Menu
+# =========================================================
 
 def send_main_menu(chat_id):
     """
@@ -275,8 +239,12 @@ def handle_start(message):
         return
 
     timezone_name = user["timezone"]
+
     local_time = get_local_time(timezone_name)
-    display_name = get_timezone_display_name(timezone_name)
+
+    display_name = get_timezone_display_name(
+        timezone_name
+    )
 
     bot.send_message(
         message.chat.id,
@@ -300,16 +268,26 @@ def handle_timezone_callback(call):
     معالجة اختيار المنطقة الزمنية.
 
     keyboards.py يستخدم:
-        tz_Asia/Aden
-        tz_Africa/Cairo
-        ...
+
+        set_timezone:Asia/Aden
+
+    لذلك يتم استخراج المنطقة بعد:
+        set_timezone:
     """
 
-    timezone_name = call.data.replace(
-        "tz_",
-        "",
-        1
-    )
+    prefix = "set_timezone:"
+
+    if not call.data.startswith(prefix):
+
+        bot.answer_callback_query(
+            call.id,
+            "❌ اختيار غير صالح.",
+            show_alert=True
+        )
+
+        return
+
+    timezone_name = call.data[len(prefix):]
 
     if not is_valid_timezone(timezone_name):
 
@@ -325,10 +303,20 @@ def handle_timezone_callback(call):
     ensure_callback_user(call)
 
     # حفظ المنطقة الزمنية
-    update_timezone(
+    updated = update_timezone(
         call.from_user.id,
         timezone_name
     )
+
+    if not updated:
+
+        bot.answer_callback_query(
+            call.id,
+            "❌ تعذر حفظ المنطقة الزمنية.",
+            show_alert=True
+        )
+
+        return
 
     display_name = get_timezone_display_name(
         timezone_name
@@ -373,7 +361,46 @@ def handle_timezone_callback(call):
 
 
 # =========================================================
-# Main Menu
+# Timezone Settings
+# =========================================================
+
+def handle_timezone_settings(call):
+    """
+    فتح قائمة تغيير المنطقة الزمنية.
+    """
+
+    if not callback_timezone_required(call):
+        return
+
+    bot.answer_callback_query(call.id)
+
+    text = (
+        "🌍 <b>تغيير المنطقة الزمنية</b>\n\n"
+        "اختر منطقتك الزمنية الجديدة:"
+    )
+
+    try:
+
+        bot.edit_message_text(
+            text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="HTML",
+            reply_markup=timezone_menu(),
+        )
+
+    except Exception:
+
+        bot.send_message(
+            call.message.chat.id,
+            text,
+            parse_mode="HTML",
+            reply_markup=timezone_menu(),
+        )
+
+
+# =========================================================
+# Main Menu Callback
 # =========================================================
 
 def handle_main_menu(call):
@@ -681,11 +708,13 @@ def handle_settings(call):
     )
 
     if not user:
+
         bot.answer_callback_query(
             call.id,
             "❌ حدث خطأ في بيانات المستخدم.",
             show_alert=True
         )
+
         return
 
     bot.answer_callback_query(call.id)
@@ -861,9 +890,7 @@ def handle_evening_settings(call):
 
 def handle_toggle_morning(call):
 
-    user = get_user(
-        call.from_user.id
-    )
+    user = ensure_callback_user(call)
 
     if not user or not user["timezone"]:
 
@@ -879,10 +906,20 @@ def handle_toggle_morning(call):
         user["morning_enabled"]
     )
 
-    update_morning_settings(
+    updated = update_morning_settings(
         call.from_user.id,
         enabled=new_status
     )
+
+    if not updated:
+
+        bot.answer_callback_query(
+            call.id,
+            "❌ تعذر تحديث إعداد التذكير.",
+            show_alert=True
+        )
+
+        return
 
     bot.answer_callback_query(
         call.id,
@@ -893,7 +930,8 @@ def handle_toggle_morning(call):
         )
     )
 
-    handle_morning_settings(call)
+    # إعادة رسم الصفحة بدون الحاجة لضغط زر إضافي.
+    _show_morning_settings(call)
 
 
 # =========================================================
@@ -902,9 +940,7 @@ def handle_toggle_morning(call):
 
 def handle_toggle_evening(call):
 
-    user = get_user(
-        call.from_user.id
-    )
+    user = ensure_callback_user(call)
 
     if not user or not user["timezone"]:
 
@@ -920,10 +956,20 @@ def handle_toggle_evening(call):
         user["evening_enabled"]
     )
 
-    update_evening_settings(
+    updated = update_evening_settings(
         call.from_user.id,
         enabled=new_status
     )
+
+    if not updated:
+
+        bot.answer_callback_query(
+            call.id,
+            "❌ تعذر تحديث إعداد التذكير.",
+            show_alert=True
+        )
+
+        return
 
     bot.answer_callback_query(
         call.id,
@@ -934,7 +980,112 @@ def handle_toggle_evening(call):
         )
     )
 
-    handle_evening_settings(call)
+    # إعادة رسم الصفحة.
+    _show_evening_settings(call)
+
+
+# =========================================================
+# Internal Morning Settings Renderer
+# =========================================================
+
+def _show_morning_settings(call):
+    """
+    إعادة عرض صفحة إعدادات الصباح.
+    """
+
+    user = get_user(call.from_user.id)
+
+    if not user:
+        return
+
+    status = (
+        "🟢 مفعل"
+        if user["morning_enabled"]
+        else "🔴 متوقف"
+    )
+
+    text = (
+        "🌅 <b>إعدادات أذكار الصباح</b>\n\n"
+        f"الحالة: {status}\n"
+        f"⏰ وقت الإرسال: <b>{user['morning_time']}</b>\n\n"
+        "يمكنك تشغيل أو إيقاف التذكير "
+        "أو تغيير وقت الإرسال."
+    )
+
+    try:
+
+        bot.edit_message_text(
+            text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="HTML",
+            reply_markup=morning_settings(
+                bool(user["morning_enabled"])
+            ),
+        )
+
+    except Exception:
+
+        bot.send_message(
+            call.message.chat.id,
+            text,
+            parse_mode="HTML",
+            reply_markup=morning_settings(
+                bool(user["morning_enabled"])
+            ),
+        )
+
+
+# =========================================================
+# Internal Evening Settings Renderer
+# =========================================================
+
+def _show_evening_settings(call):
+    """
+    إعادة عرض صفحة إعدادات المساء.
+    """
+
+    user = get_user(call.from_user.id)
+
+    if not user:
+        return
+
+    status = (
+        "🟢 مفعل"
+        if user["evening_enabled"]
+        else "🔴 متوقف"
+    )
+
+    text = (
+        "🌙 <b>إعدادات أذكار المساء</b>\n\n"
+        f"الحالة: {status}\n"
+        f"⏰ وقت الإرسال: <b>{user['evening_time']}</b>\n\n"
+        "يمكنك تشغيل أو إيقاف التذكير "
+        "أو تغيير وقت الإرسال."
+    )
+
+    try:
+
+        bot.edit_message_text(
+            text,
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="HTML",
+            reply_markup=evening_settings(
+                bool(user["evening_enabled"])
+            ),
+        )
+
+    except Exception:
+
+        bot.send_message(
+            call.message.chat.id,
+            text,
+            parse_mode="HTML",
+            reply_markup=evening_settings(
+                bool(user["evening_enabled"])
+            ),
+        )
 
 
 # =========================================================
@@ -1015,14 +1166,15 @@ def handle_evening_time(call):
 
 def handle_set_morning_time(call):
 
-    # keyboards.py:
-    # morning_set_06:00
+    if not callback_timezone_required(call):
+        return
 
-    time_value = call.data.replace(
-        "morning_set_",
-        "",
-        1
-    )
+    prefix = "morning_set_"
+
+    if not call.data.startswith(prefix):
+        return
+
+    time_value = call.data[len(prefix):]
 
     if not is_valid_time_value(time_value):
 
@@ -1034,17 +1186,27 @@ def handle_set_morning_time(call):
 
         return
 
-    update_morning_settings(
+    updated = update_morning_settings(
         call.from_user.id,
         time=time_value
     )
+
+    if not updated:
+
+        bot.answer_callback_query(
+            call.id,
+            "❌ تعذر حفظ وقت الصباح.",
+            show_alert=True
+        )
+
+        return
 
     bot.answer_callback_query(
         call.id,
         f"✅ تم ضبط وقت الصباح على {time_value}"
     )
 
-    handle_morning_settings(call)
+    _show_morning_settings(call)
 
 
 # =========================================================
@@ -1053,14 +1215,15 @@ def handle_set_morning_time(call):
 
 def handle_set_evening_time(call):
 
-    # keyboards.py:
-    # evening_set_18:00
+    if not callback_timezone_required(call):
+        return
 
-    time_value = call.data.replace(
-        "evening_set_",
-        "",
-        1
-    )
+    prefix = "evening_set_"
+
+    if not call.data.startswith(prefix):
+        return
+
+    time_value = call.data[len(prefix):]
 
     if not is_valid_time_value(time_value):
 
@@ -1072,17 +1235,27 @@ def handle_set_evening_time(call):
 
         return
 
-    update_evening_settings(
+    updated = update_evening_settings(
         call.from_user.id,
         time=time_value
     )
+
+    if not updated:
+
+        bot.answer_callback_query(
+            call.id,
+            "❌ تعذر حفظ وقت المساء.",
+            show_alert=True
+        )
+
+        return
 
     bot.answer_callback_query(
         call.id,
         f"✅ تم ضبط وقت المساء على {time_value}"
     )
 
-    handle_evening_settings(call)
+    _show_evening_settings(call)
 
 
 # =========================================================
@@ -1094,24 +1267,29 @@ def is_valid_time_value(time_value):
     التحقق من صيغة HH:MM.
     """
 
+    if not isinstance(time_value, str):
+        return False
+
+    parts = time_value.split(":")
+
+    if len(parts) != 2:
+        return False
+
     try:
 
-        hours, minutes = time_value.split(":")
+        hours = int(parts[0])
+        minutes = int(parts[1])
 
-        hours = int(hours)
-        minutes = int(minutes)
-
-        return (
-            0 <= hours <= 23
-            and 0 <= minutes <= 59
-        )
-
-    except (
-        ValueError,
-        AttributeError
-    ):
+    except ValueError:
 
         return False
+
+    return (
+        0 <= hours <= 23
+        and 0 <= minutes <= 59
+        and len(parts[0]) == 2
+        and len(parts[1]) == 2
+    )
 
 
 # =========================================================
@@ -1122,27 +1300,25 @@ def handle_adhkar_next(call):
     """
     زر ذكر آخر.
 
-    في النسخة الحالية نعيد عرض القائمة نفسها.
-    ويمكن لاحقًا تطويره إلى نظام ذكر واحد
-    مع عداد وتقدم المستخدم.
+    في النسخة الحالية يتم إعادة عرض القسم.
     """
 
-    category = call.data.replace(
-        "_next",
-        "",
-        1
-    )
+    category = call.data[:-5]
 
     if category == "morning":
+
         handle_morning(call)
 
     elif category == "evening":
+
         handle_evening(call)
 
     elif category == "sleep":
+
         handle_sleep(call)
 
     elif category == "prayer":
+
         handle_prayer(call)
 
     else:
@@ -1189,12 +1365,14 @@ def register_handlers(bot_instance: TeleBot):
         handle_start(message)
 
     # -----------------------------------------------------
-    # Timezone
+    # Timezone Selection
+    # keyboards.py:
+    # set_timezone:Asia/Aden
     # -----------------------------------------------------
 
     @bot_instance.callback_query_handler(
         func=lambda call:
-        call.data.startswith("tz_")
+        call.data.startswith("set_timezone:")
     )
     def timezone_callback(call):
 
@@ -1297,6 +1475,18 @@ def register_handlers(bot_instance: TeleBot):
         handle_settings(call)
 
     # -----------------------------------------------------
+    # Timezone Settings
+    # -----------------------------------------------------
+
+    @bot_instance.callback_query_handler(
+        func=lambda call:
+        call.data == "timezone"
+    )
+    def timezone_settings_callback(call):
+
+        handle_timezone_settings(call)
+
+    # -----------------------------------------------------
     # Morning Settings
     # -----------------------------------------------------
 
@@ -1321,7 +1511,7 @@ def register_handlers(bot_instance: TeleBot):
         handle_evening_settings(call)
 
     # -----------------------------------------------------
-    # Toggle Morning
+    # Morning Toggle
     # -----------------------------------------------------
 
     @bot_instance.callback_query_handler(
@@ -1333,7 +1523,7 @@ def register_handlers(bot_instance: TeleBot):
         handle_toggle_morning(call)
 
     # -----------------------------------------------------
-    # Toggle Evening
+    # Evening Toggle
     # -----------------------------------------------------
 
     @bot_instance.callback_query_handler(
@@ -1374,7 +1564,7 @@ def register_handlers(bot_instance: TeleBot):
 
     @bot_instance.callback_query_handler(
         func=lambda call:
-        call.data.startswith("morning_set_")
+        call.data.startswith("morning_set:")
     )
     def set_morning_time_callback(call):
 
@@ -1386,7 +1576,7 @@ def register_handlers(bot_instance: TeleBot):
 
     @bot_instance.callback_query_handler(
         func=lambda call:
-        call.data.startswith("evening_set_")
+        call.data.startswith("evening_set:")
     )
     def set_evening_time_callback(call):
 
