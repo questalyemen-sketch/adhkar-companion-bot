@@ -5,7 +5,6 @@ from config import (
     DATABASE_NAME,
     DEFAULT_MORNING_TIME,
     DEFAULT_EVENING_TIME,
-    DEFAULT_TIMEZONE,
 )
 
 
@@ -35,7 +34,7 @@ def get_connection():
 def utc_now():
     """
     الحصول على الوقت الحالي بتوقيت UTC
-    بصيغة ISO.
+    بصيغة ISO 8601.
     """
 
     return datetime.now(timezone.utc).isoformat()
@@ -59,9 +58,10 @@ def init_database():
 
             telegram_id INTEGER UNIQUE NOT NULL,
 
-            first_name TEXT,
-            username TEXT,
+            first_name TEXT DEFAULT '',
+            username TEXT DEFAULT '',
 
+            -- NULL تعني أن المستخدم لم يختر المنطقة الزمنية بعد
             timezone TEXT DEFAULT NULL,
 
             morning_enabled INTEGER DEFAULT 1,
@@ -92,10 +92,16 @@ def add_user(
     username=""
 ):
     """
-    إضافة مستخدم جديد أو تحديث بياناته.
+    إضافة مستخدم جديد أو تحديث بيانات مستخدم موجود.
 
-    المستخدم الجديد لا يحصل على منطقة زمنية تلقائيًا.
-    يجب عليه اختيارها عند أول استخدام.
+    المستخدم الجديد:
+    - لا يحصل على منطقة زمنية تلقائيًا.
+    - يحصل على أوقات التذكير الافتراضية.
+    - يتم تفعيل تذكيرات الصباح والمساء افتراضيًا.
+
+    إذا كان المستخدم موجودًا مسبقًا:
+    - يتم تحديث الاسم واسم المستخدم فقط.
+    - لا يتم تغيير المنطقة الزمنية أو إعدادات التذكير.
     """
 
     now = utc_now()
@@ -116,7 +122,7 @@ def add_user(
             created_at,
             updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, NULL, 1, 1, ?, ?, ?, ?)
 
         ON CONFLICT(telegram_id)
         DO UPDATE SET
@@ -125,11 +131,8 @@ def add_user(
             updated_at = excluded.updated_at
     """, (
         telegram_id,
-        first_name,
-        username,
-        DEFAULT_TIMEZONE,
-        1,
-        1,
+        first_name or "",
+        username or "",
         DEFAULT_MORNING_TIME,
         DEFAULT_EVENING_TIME,
         now,
@@ -166,6 +169,18 @@ def get_user(telegram_id):
 
 
 # =========================================================
+# Check User Exists
+# =========================================================
+
+def user_exists(telegram_id):
+    """
+    التحقق من وجود المستخدم في قاعدة البيانات.
+    """
+
+    return get_user(telegram_id) is not None
+
+
+# =========================================================
 # Check Timezone
 # =========================================================
 
@@ -180,7 +195,32 @@ def has_timezone(telegram_id):
     if not user:
         return False
 
-    return bool(user["timezone"])
+    timezone_name = user["timezone"]
+
+    return (
+        timezone_name is not None
+        and str(timezone_name).strip() != ""
+    )
+
+
+# =========================================================
+# Get User Timezone
+# =========================================================
+
+def get_user_timezone(telegram_id):
+    """
+    الحصول على المنطقة الزمنية للمستخدم.
+
+    يعيد:
+        اسم المنطقة الزمنية أو None
+    """
+
+    user = get_user(telegram_id)
+
+    if not user:
+        return None
+
+    return user["timezone"]
 
 
 # =========================================================
@@ -193,14 +233,23 @@ def update_timezone(
 ):
     """
     تحديث المنطقة الزمنية للمستخدم.
+
+    مثال:
+        Asia/Aden
+        Africa/Cairo
+        Asia/Riyadh
     """
+
+    if not timezone_name:
+        return False
 
     connection = get_connection()
     cursor = connection.cursor()
 
     cursor.execute("""
         UPDATE users
-        SET timezone = ?,
+        SET
+            timezone = ?,
             updated_at = ?
         WHERE telegram_id = ?
     """, (
@@ -209,8 +258,46 @@ def update_timezone(
         telegram_id
     ))
 
+    updated = cursor.rowcount > 0
+
     connection.commit()
     connection.close()
+
+    return updated
+
+
+# =========================================================
+# Clear Timezone
+# =========================================================
+
+def clear_timezone(telegram_id):
+    """
+    حذف المنطقة الزمنية للمستخدم.
+
+    بعد ذلك لن يتم إرسال التذكيرات التلقائية
+    حتى يختار المستخدم منطقة زمنية جديدة.
+    """
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        UPDATE users
+        SET
+            timezone = NULL,
+            updated_at = ?
+        WHERE telegram_id = ?
+    """, (
+        utc_now(),
+        telegram_id
+    ))
+
+    updated = cursor.rowcount > 0
+
+    connection.commit()
+    connection.close()
+
+    return updated
 
 
 # =========================================================
@@ -224,37 +311,51 @@ def update_morning_settings(
 ):
     """
     تحديث إعدادات أذكار الصباح.
+
+    enabled:
+        True  = تشغيل
+        False = إيقاف
+
+    time:
+        بصيغة HH:MM
     """
 
     connection = get_connection()
     cursor = connection.cursor()
 
+    updates = []
+    values = []
+
     if enabled is not None:
-        cursor.execute("""
-            UPDATE users
-            SET morning_enabled = ?,
-                updated_at = ?
-            WHERE telegram_id = ?
-        """, (
-            int(enabled),
-            utc_now(),
-            telegram_id
-        ))
+        updates.append("morning_enabled = ?")
+        values.append(int(bool(enabled)))
 
     if time is not None:
-        cursor.execute("""
-            UPDATE users
-            SET morning_time = ?,
-                updated_at = ?
-            WHERE telegram_id = ?
-        """, (
-            time,
-            utc_now(),
-            telegram_id
-        ))
+        updates.append("morning_time = ?")
+        values.append(time)
+
+    if not updates:
+        connection.close()
+        return False
+
+    updates.append("updated_at = ?")
+    values.append(utc_now())
+    values.append(telegram_id)
+
+    query = f"""
+        UPDATE users
+        SET {", ".join(updates)}
+        WHERE telegram_id = ?
+    """
+
+    cursor.execute(query, values)
+
+    updated = cursor.rowcount > 0
 
     connection.commit()
     connection.close()
+
+    return updated
 
 
 # =========================================================
@@ -268,37 +369,51 @@ def update_evening_settings(
 ):
     """
     تحديث إعدادات أذكار المساء.
+
+    enabled:
+        True  = تشغيل
+        False = إيقاف
+
+    time:
+        بصيغة HH:MM
     """
 
     connection = get_connection()
     cursor = connection.cursor()
 
+    updates = []
+    values = []
+
     if enabled is not None:
-        cursor.execute("""
-            UPDATE users
-            SET evening_enabled = ?,
-                updated_at = ?
-            WHERE telegram_id = ?
-        """, (
-            int(enabled),
-            utc_now(),
-            telegram_id
-        ))
+        updates.append("evening_enabled = ?")
+        values.append(int(bool(enabled)))
 
     if time is not None:
-        cursor.execute("""
-            UPDATE users
-            SET evening_time = ?,
-                updated_at = ?
-            WHERE telegram_id = ?
-        """, (
-            time,
-            utc_now(),
-            telegram_id
-        ))
+        updates.append("evening_time = ?")
+        values.append(time)
+
+    if not updates:
+        connection.close()
+        return False
+
+    updates.append("updated_at = ?")
+    values.append(utc_now())
+    values.append(telegram_id)
+
+    query = f"""
+        UPDATE users
+        SET {", ".join(updates)}
+        WHERE telegram_id = ?
+    """
+
+    cursor.execute(query, values)
+
+    updated = cursor.rowcount > 0
 
     connection.commit()
     connection.close()
+
+    return updated
 
 
 # =========================================================
@@ -332,9 +447,12 @@ def get_all_users():
 
 def get_reminder_users():
     """
-    الحصول على المستخدمين الذين:
-    1. اختاروا منطقة زمنية.
-    2. لديهم تذكير صباح أو مساء مفعّل.
+    الحصول على المستخدمين المؤهلين للتذكيرات التلقائية.
+
+    الشروط:
+    1. المستخدم موجود.
+    2. اختار منطقة زمنية.
+    3. يوجد تذكير صباح أو مساء مفعّل.
     """
 
     connection = get_connection()
@@ -344,10 +462,69 @@ def get_reminder_users():
         SELECT *
         FROM users
         WHERE timezone IS NOT NULL
+          AND TRIM(timezone) != ''
           AND (
               morning_enabled = 1
               OR evening_enabled = 1
           )
+        ORDER BY id ASC
+    """)
+
+    users = cursor.fetchall()
+
+    connection.close()
+
+    return users
+
+
+# =========================================================
+# Get Morning Reminder Users
+# =========================================================
+
+def get_morning_reminder_users():
+    """
+    الحصول على المستخدمين الذين لديهم
+    تذكير أذكار الصباح مفعّل ومنطقة زمنية محددة.
+    """
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT *
+        FROM users
+        WHERE timezone IS NOT NULL
+          AND TRIM(timezone) != ''
+          AND morning_enabled = 1
+        ORDER BY id ASC
+    """)
+
+    users = cursor.fetchall()
+
+    connection.close()
+
+    return users
+
+
+# =========================================================
+# Get Evening Reminder Users
+# =========================================================
+
+def get_evening_reminder_users():
+    """
+    الحصول على المستخدمين الذين لديهم
+    تذكير أذكار المساء مفعّل ومنطقة زمنية محددة.
+    """
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT *
+        FROM users
+        WHERE timezone IS NOT NULL
+          AND TRIM(timezone) != ''
+          AND evening_enabled = 1
         ORDER BY id ASC
     """)
 
@@ -368,6 +545,9 @@ def mark_morning_sent(
 ):
     """
     تسجيل تاريخ إرسال أذكار الصباح.
+
+    date:
+        التاريخ المحلي للمستخدم بصيغة YYYY-MM-DD.
     """
 
     connection = get_connection()
@@ -375,7 +555,8 @@ def mark_morning_sent(
 
     cursor.execute("""
         UPDATE users
-        SET last_morning_sent = ?,
+        SET
+            last_morning_sent = ?,
             updated_at = ?
         WHERE telegram_id = ?
     """, (
@@ -384,8 +565,12 @@ def mark_morning_sent(
         telegram_id
     ))
 
+    updated = cursor.rowcount > 0
+
     connection.commit()
     connection.close()
+
+    return updated
 
 
 # =========================================================
@@ -398,6 +583,9 @@ def mark_evening_sent(
 ):
     """
     تسجيل تاريخ إرسال أذكار المساء.
+
+    date:
+        التاريخ المحلي للمستخدم بصيغة YYYY-MM-DD.
     """
 
     connection = get_connection()
@@ -405,7 +593,8 @@ def mark_evening_sent(
 
     cursor.execute("""
         UPDATE users
-        SET last_evening_sent = ?,
+        SET
+            last_evening_sent = ?,
             updated_at = ?
         WHERE telegram_id = ?
     """, (
@@ -414,8 +603,46 @@ def mark_evening_sent(
         telegram_id
     ))
 
+    updated = cursor.rowcount > 0
+
     connection.commit()
     connection.close()
+
+    return updated
+
+
+# =========================================================
+# Get Last Morning Sent
+# =========================================================
+
+def get_last_morning_sent(telegram_id):
+    """
+    الحصول على آخر تاريخ أُرسلت فيه أذكار الصباح.
+    """
+
+    user = get_user(telegram_id)
+
+    if not user:
+        return None
+
+    return user["last_morning_sent"]
+
+
+# =========================================================
+# Get Last Evening Sent
+# =========================================================
+
+def get_last_evening_sent(telegram_id):
+    """
+    الحصول على آخر تاريخ أُرسلت فيه أذكار المساء.
+    """
+
+    user = get_user(telegram_id)
+
+    if not user:
+        return None
+
+    return user["last_evening_sent"]
 
 
 # =========================================================
@@ -442,5 +669,67 @@ def reset_reminder_history(telegram_id):
         telegram_id
     ))
 
+    updated = cursor.rowcount > 0
+
     connection.commit()
     connection.close()
+
+    return updated
+
+
+# =========================================================
+# Toggle Morning Reminder
+# =========================================================
+
+def toggle_morning(telegram_id):
+    """
+    تبديل حالة تذكير الصباح.
+
+    يعيد:
+        True  إذا أصبح مفعّلًا.
+        False إذا أصبح متوقفًا.
+        None إذا لم يكن المستخدم موجودًا.
+    """
+
+    user = get_user(telegram_id)
+
+    if not user:
+        return None
+
+    new_status = 0 if user["morning_enabled"] else 1
+
+    update_morning_settings(
+        telegram_id,
+        enabled=bool(new_status)
+    )
+
+    return bool(new_status)
+
+
+# =========================================================
+# Toggle Evening Reminder
+# =========================================================
+
+def toggle_evening(telegram_id):
+    """
+    تبديل حالة تذكير المساء.
+
+    يعيد:
+        True  إذا أصبح مفعّلًا.
+        False إذا أصبح متوقفًا.
+        None إذا لم يكن المستخدم موجودًا.
+    """
+
+    user = get_user(telegram_id)
+
+    if not user:
+        return None
+
+    new_status = 0 if user["evening_enabled"] else 1
+
+    update_evening_settings(
+        telegram_id,
+        enabled=bool(new_status)
+    )
+
+    return bool(new_status)
